@@ -1,38 +1,28 @@
 package com.kevin.tiertagger.tierlist;
 
-import com.kevin.tiertagger.TierCache;
 import com.kevin.tiertagger.TierTagger;
-import com.kevin.tiertagger.model.GameMode;
-import com.kevin.tiertagger.model.PlayerInfo;
 import lombok.Setter;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextWidget;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.client.texture.TextureManager;
 import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.uku3lig.ukulib.config.screen.CloseableScreen;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.util.Queue;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Setter
 public class PlayerInfoScreen extends CloseableScreen {
@@ -40,13 +30,7 @@ public class PlayerInfoScreen extends CloseableScreen {
 
     private String player;
     private Identifier texture;
-    private PlayerInfo info;
     private boolean everythingIsAwesome = true;
-
-    /**
-     * Having a queue like this avoids a {@link java.util.ConcurrentModificationException} due to adding drawable children on a different thread
-     */
-    private final Queue<TextWidget> textWidgets = new ConcurrentLinkedQueue<>();
 
     public PlayerInfoScreen(Screen parent, String player) {
         super(Text.of("Player Info"), parent);
@@ -61,59 +45,47 @@ public class PlayerInfoScreen extends CloseableScreen {
 
         this.fetchTexture(this.player).thenAccept(this::setTexture);
 
-        if (this.info == null) {
-            TierCache.searchPlayer(this.player).thenAccept(this::setInfo)
-                    .whenComplete((v, t) -> {
-                        if (t != null) {
-                            this.everythingIsAwesome = false;
-                        } else {
-                            int rankingHeight = this.info.rankings().size() * 10;
-                            int infoHeight = 56; // 4 lines of text (10 px tall) + 6 px padding
-                            int startY = (this.height - infoHeight - rankingHeight) / 2;
-                            int rankingY = startY + infoHeight;
+        // Hardcoded tier map
+        Map<String, String> manualTiers = Map.ofEntries(
+            Map.entry("alphaboy", "LT4"),
+            Map.entry("15acorn", "LT5"),
+            Map.entry("frite211", "HT5"),
+            Map.entry("godology", "HT5"),
+            Map.entry("itouchedasheep", "HT6"),
+            Map.entry("gammer_boy_2008", "LT5"),
+            Map.entry("dtoops095", "LT5"),
+            Map.entry("f1shs_", "LT5"),
+            Map.entry("unfuser", "HT5"),
+            Map.entry("searz", "HT5"),
+            Map.entry("superbearyo", "LT5"),
+            Map.entry("uitimategaming", "LT5")
+        );
 
-                            for (PlayerInfo.NamedRanking namedRanking : this.info.getSortedTiers()) {
-                                // ugly "fix" to avoid crashes if upstream doesn't have the right names
-                                if (namedRanking.mode() == null) continue;
+        String tier = manualTiers.getOrDefault(this.player.toLowerCase(), "Unranked");
 
-                                TextWidget text = new TextWidget(formatTier(namedRanking.mode(), namedRanking.ranking()), this.textRenderer);
-                                text.setX(this.width / 2 + 5);
-                                text.setY(rankingY);
+        TextWidget modeWidget = new TextWidget(Text.literal("Gamemode: Sword").formatted(Formatting.GRAY), this.textRenderer);
+        modeWidget.setX(this.width / 2 + 5);
+        modeWidget.setY(this.height / 2 - 15);
+        this.addDrawableChild(modeWidget);
 
-                                String date = DateTimeFormatter.ISO_LOCAL_DATE.withZone(ZoneOffset.UTC).format(Instant.ofEpochSecond(namedRanking.ranking().attained()));
-                                Text tooltipText = Text.literal("Attained: " + date + "\nPoints: " + points(namedRanking.ranking())).formatted(Formatting.GRAY);
-                                text.setTooltip(Tooltip.of(tooltipText));
-
-                                textWidgets.add(text);
-                                rankingY += 11;
-                            }
-                        }
-                    });
-        }
+        TextWidget tierWidget = new TextWidget(Text.literal("Tier: " + tier).formatted(Formatting.GOLD), this.textRenderer);
+        tierWidget.setX(this.width / 2 + 5);
+        tierWidget.setY(this.height / 2);
+        this.addDrawableChild(tierWidget);
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         super.render(context, mouseX, mouseY, delta);
 
-        while (!textWidgets.isEmpty()) {
-            this.addDrawableChild(textWidgets.remove());
-        }
+        context.drawCenteredTextWithShadow(this.textRenderer, this.player + "'s profile", this.width / 2, 20, 0xFFFFFF);
 
-        String name = this.info == null ? this.player : this.info.name();
-        context.drawCenteredTextWithShadow(this.textRenderer, name + "'s profile", this.width / 2, 20, 0xFFFFFF);
-
-        if (this.texture != null && this.info != null) {
+        if (this.texture != null) {
             context.drawTexture(texture, this.width / 2 - 65, (this.height - 144) / 2, 0, 0, 60, 144, 60, 144);
 
-            int rankingHeight = this.info.rankings().size() * 10;
-            int infoHeight = 56; // 4 lines of text (10 px tall) + 6 px padding
-            int startY = (this.height - infoHeight - rankingHeight) / 2;
-
-            context.drawTextWithShadow(this.textRenderer, getRegionText(this.info), this.width / 2 + 5, startY, 0xFFFFFF);
-            context.drawTextWithShadow(this.textRenderer, getPointsText(this.info), this.width / 2 + 5, startY + 15, 0xFFFFFF);
-            context.drawTextWithShadow(this.textRenderer, getRankText(this.info), this.width / 2 + 5, startY + 30, 0xFFFFFF);
-            context.drawTextWithShadow(this.textRenderer, "Rankings:", this.width / 2 + 5, startY + 45, 0xFFFFFF);
+            // Optional: draw sword icon if you add it to your resources
+            Identifier swordIcon = new Identifier("tiertagger", "textures/gui/sword.png");
+            context.drawTexture(swordIcon, this.width / 2 - 100, this.height / 2 - 20, 0, 0, 16, 16, 16, 16);
         } else {
             String text = this.everythingIsAwesome ? "Loading..." : "Unknown player";
             context.drawCenteredTextWithShadow(this.textRenderer, text, this.width / 2, this.height / 2, 0xFFFFFF);
@@ -147,77 +119,5 @@ public class PlayerInfoScreen extends CloseableScreen {
 
             return tex;
         });
-    }
-
-    private Text formatTier(@NotNull GameMode gamemode, PlayerInfo.Ranking tier) {
-        MutableText tierText = getTierText(tier.tier(), tier.pos(), tier.retired());
-
-        if (tier.comparablePeak() < tier.comparableTier()) {
-            // warning caused by potential NPE by unboxing of peak{Tier,Pos} which CANNOT happen, see impl of comparablePeak
-            // noinspection DataFlowIssue
-            tierText = tierText.append(Text.literal(" (peak: ").styled(s -> s.withColor(Formatting.GRAY)))
-                    .append(getTierText(tier.peakTier(), tier.peakPos(), tier.retired()))
-                    .append(Text.literal(")").styled(s -> s.withColor(Formatting.GRAY)));
-        }
-
-        return Text.empty()
-                .append(gamemode.asStyled(true))
-                .append(Text.literal(": ").formatted(Formatting.GRAY))
-                .append(tierText);
-    }
-
-    private MutableText getTierText(int tier, int pos, boolean retired) {
-        StringBuilder text = new StringBuilder();
-        if (retired) text.append("R");
-        text.append(pos == 0 ? "H" : "L").append("T").append(tier);
-
-        int color = TierTagger.getTierColor(text.toString());
-        return Text.literal(text.toString()).styled(s -> s.withColor(color));
-    }
-
-    private Text getRegionText(PlayerInfo info) {
-        return Text.empty()
-                .append(Text.literal("Region: "))
-                .append(Text.literal(info.region()).styled(s -> s.withColor(info.getRegionColor())));
-    }
-
-    private Text getPointsText(PlayerInfo info) {
-        PlayerInfo.PointInfo pointInfo = info.getPointInfo();
-
-        return Text.empty()
-                .append(Text.literal("Points: "))
-                .append(Text.literal(info.points() + " ").styled(s -> s.withColor(pointInfo.getColor())))
-                .append(Text.literal("(" + pointInfo.getTitle() + ")").styled(s -> s.withColor(pointInfo.getAccentColor())));
-    }
-
-    private Text getRankText(PlayerInfo info) {
-        int color = switch (info.overall()) {
-            case 1 -> 0xe5ba43;
-            case 2 -> 0x808c9c;
-            case 3 -> 0xb56326;
-            default -> 0x1e2634;
-        };
-
-        return Text.empty()
-                .append(Text.literal("Global rank: "))
-                .append(Text.literal("#" + info.overall()).styled(s -> s.withColor(color)));
-    }
-
-    private int points(PlayerInfo.Ranking ranking) {
-        String tier = getTierText(ranking.tier(), ranking.pos(), false).getString();
-
-        return switch (tier) {
-            case "HT1" -> 60;
-            case "LT1" -> 45;
-            case "HT2" -> 30;
-            case "LT2" -> 20;
-            case "HT3" -> 10;
-            case "LT3" -> 6;
-            case "HT4" -> 4;
-            case "LT4" -> 3;
-            case "HT5" -> 2;
-            case "LT5" -> 1;
-            default -> 0;
-        };
     }
 }
